@@ -1,0 +1,5 @@
+# Internal CA for LAN use. Replace with a real domain for automatic Let's Encrypt certificates.
+:443 {
+	tls internal
+	reverse_proxy api:3000
+}

@@ -1,0 +1,22 @@
+# secrets
+.env
+.env.*
+!.env.example
+*credentials*
+*.keystore
+*.jks
+key.properties
+
+# build output
+node_modules/
+dist/
+build/
+.dart_tool/
+.flutter-plugins*
+*.log
+
+# IDE / OS
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
