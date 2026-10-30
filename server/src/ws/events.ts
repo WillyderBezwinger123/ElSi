@@ -87,7 +87,11 @@ export class EventBus implements Events {
   }
 
   isOnline(userId: string): boolean {
-    return (this.byUser.get(userId)?.size ?? 0) > 0;
+    for (const conn of this.byUser.get(userId) ?? []) {
+      // A socket in its closing handshake no longer counts.
+      if (conn.socket.readyState === conn.socket.OPEN) return true;
+    }
+    return false;
   }
 
   onClientMessage(type: string, handler: ClientMessageHandler): void {

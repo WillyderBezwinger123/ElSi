@@ -144,7 +144,7 @@ export function block(over: Partial<Record<string, unknown>> & { pageId: string;
 export async function push(
   app: FastifyInstance,
   headers: { authorization: string },
-  ops: { entity: 'page' | 'block'; data: { id: unknown }; baseHlc?: string | null }[],
+  ops: { entity: 'page' | 'block'; data: { id: unknown; [k: string]: unknown }; baseHlc?: string | null }[],
   deviceId = 'dev-a',
 ) {
   return app.inject({
