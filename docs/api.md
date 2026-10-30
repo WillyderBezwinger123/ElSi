@@ -4,7 +4,8 @@ This is the shared contract between `client/` and `server/`. Change it here firs
 
 - Base path: `/api/v1`. JSON everywhere unless noted. Ids are UUIDv7 strings.
 - Auth: `Authorization: Bearer <accessToken>` on every route except `/auth/register`, `/auth/login`, `/auth/refresh` and `/health`.
-- Errors: HTTP status plus `{ "error": "<code>", "message": "<human text>" }`. Codes used: `bad_request`, `unauthorized`, `forbidden`, `not_found`, `conflict`, `too_large`, `rate_limited`, `ai_not_configured`, `budget_exceeded`.
+- Errors: HTTP status plus `{ "error": "<code>", "message": "<human text>" }`. Codes used: `bad_request`, `unauthorized`, `forbidden`, `not_found`, `conflict`, `too_large`, `rate_limited`, `ai_not_configured`, `budget_exceeded` (plus `unsupported_media_type` and `internal` for 415/500).
+- Rate limit: `/auth/register`, `/auth/login` and `/auth/refresh` allow 10 requests per minute per IP (`429 rate_limited`).
 - Timestamps: ISO 8601 strings in UTC. Clock values (`hlc`) are strings `<wallMs 15 digits>-<counter 5 digits>-<deviceId>`, compared as plain strings.
 
 ## Health
@@ -22,7 +23,7 @@ This is the shared contract between `client/` and `server/`. Change it here firs
 | `GET /me` | none | `User` |
 | `GET /users` | none | `[User]` (everyone on this server, for starting chats and sharing) |
 
-- `AuthResult = {user: User, accessToken, refreshToken, deviceId}`. `User = {id, email, name}`.
+- `AuthResult = {user: User, accessToken, refreshToken, deviceId}`. `User = {id, email, name}`. `deviceId` is the device session id (the `id` in `/auth/devices`).
 - Registration: the first user may always register. Later users need `inviteCode` equal to the server's `INVITE_CODE` env var (if that is unset, registration is closed after the first user).
 - Passwords: Argon2id. Minimum 8 characters.
 - Access token: JWT (HS256, `JWT_SECRET`), 15 minutes, claims `sub` (user id), `sid` (device session id).
@@ -65,12 +66,23 @@ Rules:
 - Policy: the user must be a member of the page's workspace. Moving a page to another workspace requires membership in both.
 - After applying, the server sends `sync.hint` over the WebSocket to every member's other devices.
 
+Server details (clarifications of the rules above):
+- A push is atomic. If any op breaks policy, the whole push fails with `403 forbidden` and nothing is applied. A block's page must already exist on the server or come earlier in the same push.
+- When an incoming block wins a concurrent edit, its result is `applied` with `conflictCopyId` (the copy holding the overwritten version).
+- No conflict copy is made when the stored and incoming `hlc` share the same `deviceId` (a device cannot conflict with itself), when either side is a deletion, or when the content is equal (key order ignored).
+- Conflict copy ids are derived from the op, so retrying an op returns the same `conflictCopyId` and never makes a second copy. Copies keep the original's `pageId`, `parentId` and `position`.
+
 `GET /sync/pull?since=<seq>&limit=<n, default 500, max 1000>`
 Response: `{ "changes": [{ "seq", "entity": "page"|"block"|"workspace", "data": {...} }], "nextSeq", "hasMore" }`. Only rows in workspaces the user belongs to. For `workspace`, `data` is a `Workspace`.
+- `data` is always the row's current state. Each row appears at most once per response. Within a response, workspaces come first, then pages, then blocks. Across responses, a block can still arrive before its page, so clients must tolerate that.
+- Store `nextSeq` as the next `since`, even when `changes` is empty: it can jump past changes the user cannot see.
+- A row that left the user's workspaces (its page moved to a workspace they are not in) arrives as a tombstone with `deleted: true`. A page tombstone has `workspaceId` set to the old workspace and an empty title. A block tombstone has `content: {}`.
+- A workspace the user was removed from arrives as `{id, name, kind, members: [], deleted: true}`. Drop it locally, with its pages and blocks.
+- When a user is added to a workspace, all its pages and blocks are sent again, so the new member gets them with their existing cursor.
 
 ## Files
 - `PUT /files/:sha256` with the raw bytes as body and the real `Content-Type`. The server verifies the hash. Max 25 MB (`too_large`). Response `FileInfo = {id, sha256, size, mime}`. Uploading an existing hash is a no-op that returns the same info.
-- `GET /files/:sha256` returns the bytes. Only the uploader, or members of a conversation or workspace that references the file, may read it.
+- `GET /files/:sha256` returns the bytes. Only the uploader, or members of a conversation or workspace that references the file, may read it. A workspace references a file when one of its blocks has the sha256 anywhere in `content`. A conversation references it when a message has it as an attachment. Files that are missing and files the user may not read both return `404 not_found`.
 
 ## Chat
 - `Conversation = {id, kind: "dm"|"group", title, aiVisible, members: [{userId, lastReadSeq}], lastMessage?: Message, unreadCount}`
@@ -107,6 +119,11 @@ Server to client:
 - `typing {conversationId, userId}`
 - `sync.hint {seq}`
 - `proposal.new {proposal}`, `job.updated {job}`
+- `error {error, message}` for a frame that is not JSON, has no `type`, or has an unknown `type`.
+
+Connection rules:
+- The server accepts the upgrade and then closes the socket with code `4401` if the token is missing, invalid or expired, or if its device session is revoked. Revoking a device also closes its open sockets with `4401`. Reconnect with a fresh access token.
+- Frames are limited to 64 KB. A socket that sends no frame for 75 s is dropped.
 
 ## Push (Android, UnifiedPush)
 - `POST /push/register {endpoint}` stores the UnifiedPush endpoint for the current device session. `DELETE /push/register` removes it.

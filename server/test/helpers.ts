@@ -1,3 +1,4 @@
+import { randomBytes } from 'node:crypto';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -6,6 +7,7 @@ import { buildApp } from '../src/app.js';
 import { type Config, loadConfig } from '../src/config.js';
 import type { Db } from '../src/db/db.js';
 import { migrate } from '../src/db/migrate.js';
+import { PgDb } from '../src/db/pg.js';
 import { PgliteDb } from '../src/db/pglite.js';
 import { uuidv7 } from '../src/ids.js';
 
@@ -18,9 +20,35 @@ export interface TestEnv {
   close(): Promise<void>;
 }
 
-/** Fresh in-memory PGlite + migrated schema + app. One per test file (PGlite boot is slow-ish). */
+/**
+ * A fresh, empty database. Default: in-memory PGlite. With `TEST_DATABASE_URL=postgres://...`
+ * (optional, e.g. a pgvector container) a throwaway database is created on that server instead.
+ */
+async function freshDb(): Promise<{ db: Db; drop(): Promise<void> }> {
+  const url = process.env.TEST_DATABASE_URL;
+  if (!url) {
+    const db = await PgliteDb.create();
+    return { db, drop: () => db.close() };
+  }
+  const name = `elsi_test_${randomBytes(6).toString('hex')}`;
+  const admin = new PgDb(url);
+  await admin.exec(`CREATE DATABASE ${name}`);
+  const u = new URL(url);
+  u.pathname = `/${name}`;
+  const db = new PgDb(u.toString());
+  return {
+    db,
+    async drop() {
+      await db.close();
+      await admin.exec(`DROP DATABASE ${name} WITH (FORCE)`);
+      await admin.close();
+    },
+  };
+}
+
+/** Fresh database + migrated schema + app. One per test file (PGlite boot is slow-ish). */
 export async function createTestEnv(overrides: Partial<Config> = {}): Promise<TestEnv> {
-  const db = await PgliteDb.create();
+  const { db, drop } = await freshDb();
   await migrate(db);
   const filesDir = await mkdtemp(path.join(tmpdir(), 'elsi-files-'));
   const config: Config = {
@@ -37,7 +65,7 @@ export async function createTestEnv(overrides: Partial<Config> = {}): Promise<Te
     config,
     async close() {
       await app.close();
-      await db.close();
+      await drop();
       await rm(filesDir, { recursive: true, force: true });
     },
   };
