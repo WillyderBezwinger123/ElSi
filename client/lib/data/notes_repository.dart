@@ -132,6 +132,29 @@ class NotesRepository {
     });
   }
 
+  /// Markdown for a page, with its title as a top-level heading.
+  Future<String> exportMarkdown(String pageId) async {
+    final page = await getPage(pageId);
+    // A blank line between blocks keeps paragraphs separate on re-import.
+    final body = documentToMarkdown(await loadDocument(pageId), lineBreak: '\n').trim();
+    final title = page?.title.trim() ?? '';
+    return title.isEmpty ? '$body\n' : '# $title\n\n$body\n';
+  }
+
+  /// Creates a page from markdown. A leading `# Heading` becomes the title.
+  Future<String> importMarkdown(String markdown, {String? parentId}) async {
+    var title = 'Imported';
+    var body = markdown.replaceAll('\r\n', '\n').trimLeft();
+    final firstLine = body.split('\n').first;
+    if (firstLine.startsWith('# ')) {
+      title = firstLine.substring(2).trim();
+      body = body.substring(firstLine.length).trimLeft();
+    }
+    final pageId = await createPage(parentId: parentId, title: title);
+    await saveDocument(pageId, markdownToDocument(body));
+    return pageId;
+  }
+
   /// Full-text search over block text. Returns matching page ids.
   Future<List<String>> search(String query) async {
     final text = query.trim().replaceAll('"', '');

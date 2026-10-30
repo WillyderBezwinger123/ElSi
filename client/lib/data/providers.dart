@@ -21,3 +21,14 @@ final notesRepositoryProvider = Provider<NotesRepository>(
 final pagesProvider = StreamProvider<List<Page>>(
   (ref) => ref.watch(notesRepositoryProvider).watchPages(),
 );
+
+/// Pages matching a query by title or block text, in tree order.
+final searchResultsProvider = FutureProvider.family<List<Page>, String>((ref, query) async {
+  final pages = ref.watch(pagesProvider).value ?? const <Page>[];
+  final q = query.trim().toLowerCase();
+  if (q.isEmpty) return const [];
+  final textHits = (await ref.watch(notesRepositoryProvider).search(q)).toSet();
+  return pages
+      .where((p) => p.title.toLowerCase().contains(q) || textHits.contains(p.id))
+      .toList();
+});

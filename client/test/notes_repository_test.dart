@@ -58,6 +58,34 @@ void main() {
     expect(blocks.where((b) => b.deleted), hasLength(1));
   });
 
+  test('markdown import takes the title from the first heading', () async {
+    final pageId = await repo.importMarkdown(
+      '# Trip plan\r\n\r\n## Packing\r\n\r\n- [ ] tent\r\n- passport\r\n\r\n'
+      '| item | qty |\n|---|---|\n| socks | 4 |\n',
+    );
+    final page = await repo.getPage(pageId);
+    expect(page!.title, 'Trip plan');
+
+    final types = (await repo.loadDocument(pageId)).root.children.map((n) => n.type).toList();
+    expect(types, containsAllInOrder(['heading', 'todo_list', 'bulleted_list', 'table']));
+    expect(await repo.search('passport'), [pageId]);
+  });
+
+  test('markdown export round-trips through import', () async {
+    final pageId = await repo.createPage(title: 'Notes');
+    await repo.saveDocument(pageId, _doc(['hello world', 'second line']));
+
+    final markdown = await repo.exportMarkdown(pageId);
+    expect(markdown, startsWith('# Notes\n\n'));
+    expect(markdown, contains('hello world'));
+
+    final copyId = await repo.importMarkdown(markdown);
+    final copy = await repo.loadDocument(copyId);
+    expect((await repo.getPage(copyId))!.title, 'Notes');
+    expect(copy.root.children.map((n) => n.delta?.toPlainText()),
+        ['hello world', 'second line']);
+  });
+
   test('deleted pages are hidden but queued for sync', () async {
     final pageId = await repo.createPage();
     await repo.deletePage(pageId);

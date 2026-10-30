@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:appflowy_editor/appflowy_editor.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/app_shell.dart';
@@ -67,16 +68,25 @@ class _EditorPageState extends ConsumerState<EditorPage> {
     return _repo.saveDocument(pageId, editor.document);
   }
 
-  void _flush(String pageId) {
+  /// Writes any pending (debounced) edits immediately.
+  Future<void> _flush(String pageId) async {
     final editor = _editor;
     if (_saveTimer?.isActive ?? false) {
       _saveTimer!.cancel();
-      if (editor != null) _save(pageId, editor);
+      if (editor != null) await _save(pageId, editor);
     }
     if (_titleTimer?.isActive ?? false) {
       _titleTimer!.cancel();
-      _repo.renamePage(pageId, _title.text);
+      await _repo.renamePage(pageId, _title.text);
     }
+  }
+
+  Future<void> _copyMarkdown() async {
+    final messenger = ScaffoldMessenger.of(context);
+    await _flush(widget.pageId);
+    final markdown = await _repo.exportMarkdown(widget.pageId);
+    await Clipboard.setData(ClipboardData(text: markdown));
+    messenger.showSnackBar(const SnackBar(content: Text('Copied page as Markdown')));
   }
 
   @override
@@ -98,20 +108,35 @@ class _EditorPageState extends ConsumerState<EditorPage> {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Padding(
-          padding: EdgeInsets.fromLTRB(wide ? 48 : 16, 24, 16, 0),
-          child: TextField(
-            controller: _title,
-            style: theme.textTheme.headlineMedium,
-            decoration: const InputDecoration(
-              hintText: 'Untitled',
-              border: InputBorder.none,
-            ),
-            onChanged: (value) {
-              _titleTimer?.cancel();
-              _titleTimer = Timer(_saveDelay, () {
-                _repo.renamePage(widget.pageId, value);
-              });
-            },
+          padding: EdgeInsets.fromLTRB(wide ? 48 : 16, 24, 8, 0),
+          child: Row(
+            children: [
+              Expanded(
+                child: TextField(
+                  controller: _title,
+                  style: theme.textTheme.headlineMedium,
+                  decoration: const InputDecoration(
+                    hintText: 'Untitled',
+                    border: InputBorder.none,
+                  ),
+                  onChanged: (value) {
+                    _titleTimer?.cancel();
+                    _titleTimer = Timer(_saveDelay, () {
+                      _repo.renamePage(widget.pageId, value);
+                    });
+                  },
+                ),
+              ),
+              PopupMenuButton<String>(
+                tooltip: 'Page actions',
+                onSelected: (value) {
+                  if (value == 'markdown') _copyMarkdown();
+                },
+                itemBuilder: (_) => const [
+                  PopupMenuItem(value: 'markdown', child: Text('Copy as Markdown')),
+                ],
+              ),
+            ],
           ),
         ),
         Expanded(
