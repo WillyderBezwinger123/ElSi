@@ -6,6 +6,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/app_shell.dart';
 import '../../data/providers.dart';
+import '../../ui_tokens/editor_style.dart';
 
 /// Editor for one page. Loads blocks from the database and autosaves them
 /// shortly after the last edit.
@@ -117,7 +118,7 @@ class _EditorPageState extends ConsumerState<EditorPage> {
           child: AppFlowyEditor(
             key: ValueKey(widget.pageId),
             editorState: editor,
-            editorStyle: wide ? const EditorStyle.desktop() : const EditorStyle.mobile(),
+            editorStyle: editorStyleFor(theme, wide: wide),
           ),
         ),
       ],
